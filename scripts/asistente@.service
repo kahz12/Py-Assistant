@@ -1,0 +1,69 @@
+# ===========================================================
+# asistente@.service -- Servicio systemd para el asistente AI
+#
+# Instalacion:
+#   sudo cp scripts/asistente@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now asistente@ale
+#
+# El parametro %i define el usuario bajo el cual se ejecuta.
+# El servicio NUNCA corre como root (SEC-11).
+# ===========================================================
+
+[Unit]
+Description=Asistente Personal AI - Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/home/%i/Asistente_IA
+ExecStartPre=/bin/bash -c 'test -f .env || (echo ".env no encontrado" && exit 1)'
+ExecStart=/home/%i/Asistente_IA/venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# ------------------------------------
+# Seguridad del proceso (SEC-11)
+# ------------------------------------
+# NoNewPrivileges: impide ganar privilegios via setuid/setgid.
+# ProtectSystem: monta / como read-only excepto las rutas permitidas.
+# ProtectHome: restringe acceso a /home excepto lo explicitamente permitido.
+# PrivateTmp: crea un /tmp aislado para el servicio.
+# ProtectKernelTunables: bloquea acceso a /proc/sys y /sys.
+# ProtectControlGroups: bloquea escritura en /sys/fs/cgroup.
+# RestrictSUIDSGID: prohibe crear archivos setuid/setgid.
+# LockPersonality: impide cambiar el dominio de ejecucion.
+# RestrictRealtime: bloquea uso de scheduling de tiempo real.
+# RestrictNamespaces: restringe creacion de namespaces.
+# SystemCallFilter: solo permite syscalls seguras.
+# UMask: nuevos archivos creados con permisos restrictivos.
+# ------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/Asistente_IA/memory_vault /home/%i/Asistente_IA/logs
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+# Variables de entorno
+EnvironmentFile=/home/%i/Asistente_IA/.env
+
+# Limitar recursos
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

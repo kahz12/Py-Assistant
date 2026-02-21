@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+
+# Vault completo (datos personales, conversaciones, notas, media)
+memory_vault/
+
+# Vault encryption keys
+*.key
+.vault_key
+
+# Vault image (LUKS2)
+*.img
+
+# Backups
+backups/
+
+# OS
+.DS_Store
+Thumbs.db
+.entornos_ia_extras/
+
+# Agent/AI Auto-generated
+.agent/
+.agents/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

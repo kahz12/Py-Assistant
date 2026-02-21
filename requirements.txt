@@ -1,0 +1,22 @@
+# Core
+python-telegram-bot>=21.0
+openai>=1.40.0
+anthropic>=0.34.0
+pyyaml==6.0.1
+python-dotenv==1.0.1
+loguru==0.7.2
+rich>=13.0.0
+
+# Seguridad
+cryptography==42.0.8
+bcrypt>=4.0.0
+
+# Opcional: Reconocimiento de voz local
+# SpeechRecognition>=3.10.0
+
+# Opcional: Motor local
+ollama>=0.3.0
+
+# Testing
+pytest>=8.3.0
+pytest-asyncio>=0.24.0

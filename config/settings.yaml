@@ -1,0 +1,17 @@
+assistant:
+  auto_consolidate_memory_every_n_conversations: 20
+  max_context_conversations: 5
+  name: ARIA
+llm:
+  local:
+    model: phi3:mini
+    ollama_url: http://localhost:11434
+  mode: api
+  model: '1'
+  provider: groq
+telegram:
+  allowed_user_id: null
+  bot_token: ${TELEGRAM_BOT_TOKEN}
+vault:
+  encryption_method: fernet
+  path: memory_vault

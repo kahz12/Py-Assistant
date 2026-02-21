@@ -1,0 +1,28 @@
+network:
+  default_mode: "connected"       # "isolated" o "connected"
+  allowed_local_subnets: []       # Ninguna subnet local permitida
+  require_confirmation_for_internet: false
+  allowed_domains_when_connected:
+    - "api.groq.com"
+    - "api.openai.com"
+    - "api.anthropic.com"
+    - "api.telegram.org"
+    - "calendar.google.com"
+    - "mail.google.com"
+
+filesystem:
+  allowed_read_paths:
+    - "/home/"
+    - "/tmp/"
+  allowed_write_paths:
+    - "/tmp/"
+  blocked_paths:
+    - "/etc/"
+    - "/root/"
+    - "/sys/"
+
+vault:
+  encryption_method: "fernet"     # "luks2" o "fernet"
+  vault_image_path: ""            # Solo para LUKS2
+  mount_point: ""                 # Solo para LUKS2
+  auto_unmount_on_idle_minutes: 30
