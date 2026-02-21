@@ -77,7 +77,7 @@ Se realizó una auditoría completa del código fuente, configuraciones, scripts
 ### Dependencia agregada
 
 - `bcrypt 5.0.0`
-\n\n### � Auditoría de Seguridad — Skills Nuevos (2026-02-20)
+### Auditoría de Seguridad — Skills Nuevos (2026-02-20)
 
 11 vulnerabilidades encontradas y remediadas en los 6 skills nuevos:
 
@@ -105,7 +105,6 @@ Se realizó una auditoría completa del código fuente, configuraciones, scripts
 | ID | Archivo | Remediación |
 |---|---|---|
 | SEC-N07 | media_tools | Inyección via formato → solo alfanumérico |
-\n\n
 
 ## Estructura de Directorios
 
