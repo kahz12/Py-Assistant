@@ -1,0 +1,18 @@
+{
+  "name": "weather",
+  "display_name": "Clima (OpenWeatherMap)",
+  "description": "Consulta el clima actual o pronostico de cualquier ciudad usando la API de OpenWeatherMap.",
+  "version": "1.1.0",
+  "author": "local",
+  "source": "local",
+  "actions": [
+    "current",
+    "forecast",
+    "help"
+  ],
+  "requires_env": [
+    "OPENWEATHER_KEY"
+  ],
+  "loaded_at": "2026-02-25T16:42:25Z",
+  "enabled": true
+}

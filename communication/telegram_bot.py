@@ -24,6 +24,7 @@ from telegram.ext import (
 from pathlib import Path
 from core.auth import AuthManager
 from core.assistant import Assistant
+from core.lane_queue import LaneQueue
 from loguru import logger
 
 
@@ -83,6 +84,11 @@ class TelegramInterface:
 
         # Rate limiting: {user_id: [timestamps]}
         self._rate_limits: dict[int, list[float]] = defaultdict(list)
+
+        # Lane Queue: procesamiento serial por usuario
+        self._lane_queue = LaneQueue(
+            waq_dir=vault_path / "waq" if vault_path else None
+        )
 
         # Inicializar la aplicacion de Telegram
         self.app = Application.builder().token(token).build()
@@ -582,8 +588,56 @@ class TelegramInterface:
             action="typing",
         )
 
-        # Procesar con el orquestador
+        # Procesar con el orquestador via Lane Queue (serial por usuario)
         self.auth.refresh_activity()  # Actualizar timestamp de sesion
+
+        # Capturamos el chat_id aqui para usarlo en el callback de la cola
+        chat_id = update.effective_chat.id
+        bot = context.bot
+
+        async def _process_and_reply(msg_text: str):
+            """Callback para la Lane Queue: procesa y responde al usuario."""
+            try:
+                _response = await self.assistant.process(msg_text)
+
+                # Parsear media adjunta
+                _images = re.findall(r'\[IMAGE:\s*(.+?)\]', _response)
+                _files = re.findall(r'\[FILE:\s*(.+?)\]', _response)
+                _response = re.sub(r'\[IMAGE:\s*.+?\]', '', _response).strip()
+                _response = re.sub(r'\[FILE:\s*.+?\]', '', _response).strip()
+
+                for img_path in _images:
+                    p = Path(img_path.strip())
+                    if p.exists():
+                        try:
+                            await bot.send_photo(chat_id=chat_id, photo=open(p, 'rb'))
+                        except Exception as e:
+                            logger.error(f"Error enviando foto {p}: {e}")
+
+                for file_path in _files:
+                    p = Path(file_path.strip())
+                    if p.exists():
+                        try:
+                            await bot.send_document(chat_id=chat_id, document=open(p, 'rb'))
+                        except Exception as e:
+                            logger.error(f"Error enviando archivo {p}: {e}")
+
+                if _response:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=_response,
+                        parse_mode="Markdown",
+                    )
+            except Exception as e:
+                logger.error(f"Error en Lane Queue callback: {e}")
+                await bot.send_message(chat_id=chat_id, text="Error procesando tu mensaje. Por favor intenta de nuevo.")
+
+        await self._lane_queue.enqueue(str(user_id), text, _process_and_reply)
+        return
+
+        # ---- Código de respuesta inline antiguo (mantenido como referencia) ----
+        # NOTA: El bloque inferior ya NO se ejecuta porque el lane queue retorna antes.
+        # Se lo deja documentalmente hasta que la refactorizacion sea validada.
         try:
             response = await self.assistant.process(text)
             

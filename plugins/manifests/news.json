@@ -1,0 +1,19 @@
+{
+  "name": "news",
+  "display_name": "Noticias (NewsAPI)",
+  "description": "Obtiene noticias y titulares en tiempo real de fuentes mundiales via NewsAPI. Soporta busqueda por tema, pais y categoria.",
+  "version": "1.0.0",
+  "author": "local",
+  "source": "local",
+  "actions": [
+    "headlines",
+    "search",
+    "sources",
+    "help"
+  ],
+  "requires_env": [
+    "NEWS_API_KEY"
+  ],
+  "loaded_at": "2026-02-25T16:42:25Z",
+  "enabled": true
+}

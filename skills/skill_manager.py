@@ -1,11 +1,12 @@
 """
-skills/skill_manager.py -- Cargador dinamico de habilidades.
+skills/skill_manager.py -- Cargador dinamico de habilidades y plugins.
 
 Busca modulos Python en el directorio skills/ que expongan:
   - SKILL_NAME : str         -- Identificador unico del skill.
   - execute(**kwargs) : str  -- Funcion principal de ejecucion.
 
-Los skills se cargan automaticamente al inicializar el SkillManager.
+Los skills incorporados se cargan desde skills/.
+Los plugins externos se delegan a PluginManager (core/plugin_manager.py).
 """
 import importlib
 from pathlib import Path
@@ -16,19 +17,25 @@ class SkillManager:
     """
     Carga y ejecuta skills de forma dinamica.
 
-    Cada skill es un modulo Python independiente ubicado en el directorio
-    de skills. Para ser reconocido, debe definir las constantes
-    SKILL_NAME y la funcion execute().
+    Gestiona:
+      - Skills incorporados: modulos en skills/ con SKILL_NAME + execute()
+      - Plugins externos: delegados a PluginManager (plugins/ dir)
 
     Atributos:
         skills_dir: Ruta al directorio de skills.
-        loaded_skills: Diccionario {nombre: modulo} de skills cargados.
+        loaded_skills: {nombre: modulo} de skills incorporados.
+        plugin_manager: Instancia de PluginManager para plugins externos.
     """
 
-    def __init__(self, skills_dir: Path):
+    def __init__(self, skills_dir: Path, mcp_router=None):
         self.skills_dir = skills_dir
         self.loaded_skills: dict[str, object] = {}
         self._auto_load()
+
+        # Delegar plugins al PluginManager
+        from core.plugin_manager import PluginManager
+        plugins_dir = skills_dir.parent / "plugins"
+        self.plugin_manager = PluginManager(plugins_dir, mcp_router=mcp_router)
 
     def _auto_load(self):
         """
@@ -64,48 +71,39 @@ class SkillManager:
             except Exception as e:
                 logger.error(f"Error cargando skill {skill_path.name}: {e}")
 
-        # Cargar plugins externos
-        plugins_dir = self.skills_dir.parent / "plugins"
-        if plugins_dir.exists():
-            for plugin_file in plugins_dir.glob("*.py"):
-                if plugin_file.name.startswith("_"):
-                    continue
-
-                try:
-                    import sys
-                    if str(plugins_dir) not in sys.path:
-                        sys.path.insert(0, str(plugins_dir))
-                    
-                    module_name = plugin_file.stem
-                    module = importlib.import_module(module_name)
-                    if hasattr(module, "SKILL_NAME") and hasattr(module, "execute"):
-                        self.loaded_skills[module.SKILL_NAME] = module
-                        logger.info(f"[PLUGIN] Cargado: {module.SKILL_NAME}")
-                except Exception as e:
-                    logger.error(f"Error cargando plugin {plugin_file.name}: {e}")
-
     def run(self, skill_name: str, **kwargs) -> str:
         """
-        Ejecuta un skill por su nombre.
+        Ejecuta un skill o plugin por su nombre.
+
+        Primero busca en skills incorporados, luego en plugins externos.
 
         Args:
-            skill_name: Identificador del skill a ejecutar.
-            **kwargs: Argumentos a pasar a la funcion execute() del skill.
+            skill_name: Identificador del skill/plugin a ejecutar.
+            **kwargs: Argumentos a pasar a execute().
 
         Returns:
             Resultado de la ejecucion como string, o mensaje de error.
         """
-        if skill_name not in self.loaded_skills:
-            return f"Skill '{skill_name}' no disponible."
-        try:
-            result = self.loaded_skills[skill_name].execute(**kwargs)
-            logger.info(f"[SKILL] Ejecutado: {skill_name}")
-            return result
-        except Exception as e:
-            error_msg = f"Error ejecutando skill '{skill_name}': {str(e)}"
-            logger.error(error_msg)
-            return error_msg
+        # Skills incorporados
+        if skill_name in self.loaded_skills:
+            try:
+                result = self.loaded_skills[skill_name].execute(**kwargs)
+                logger.info(f"[SKILL] Ejecutado: {skill_name}")
+                return result
+            except Exception as e:
+                error_msg = f"Error ejecutando skill '{skill_name}': {str(e)}"
+                logger.error(error_msg)
+                return error_msg
+
+        # Plugins externos (via PluginManager)
+        if self.plugin_manager.is_loaded(skill_name):
+            return self.plugin_manager.run(skill_name, **kwargs)
+
+        available = ", ".join(self.list_skills()) or "ninguno"
+        return f"Skill o plugin '{skill_name}' no disponible. Disponibles: {available}"
 
     def list_skills(self) -> list[str]:
-        """Retorna la lista de nombres de skills cargados."""
-        return list(self.loaded_skills.keys())
+        """Retorna la lista de nombres de skills y plugins cargados."""
+        skill_names = list(self.loaded_skills.keys())
+        plugin_names = self.plugin_manager.plugin_names()
+        return skill_names + plugin_names

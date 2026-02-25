@@ -1,0 +1,12 @@
+{
+  "name": "example_plugin",
+  "display_name": "Example Plugin",
+  "description": "Plugin de ejemplo para mostrar como funciona el sistema externo.",
+  "version": "0.0.0",
+  "author": "local",
+  "source": "local",
+  "actions": [],
+  "requires_env": [],
+  "loaded_at": "2026-02-25T16:42:25Z",
+  "enabled": true
+}

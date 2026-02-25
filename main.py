@@ -244,15 +244,142 @@ def main():
         vault_path=vault_path,
     )
 
+    # -- Paso 6.5: Scheduler de Invocacion Autonoma (inspirado en OpenClaw) --
+    from core.scheduler import AssistantScheduler
+    scheduler = AssistantScheduler()
+
+    # Obtener el Telegram user_id para envio proactivo si existe pairing
+    paired_user_id = bot.allowed_user_id
+
+    if paired_user_id:
+        async def _heartbeat_check():
+            """Job: Healthbeat horario — verifica estado del sistema (log silencioso)."""
+            from core.healthcheck import run_healthcheck
+            issues = run_healthcheck(config)
+            if issues["critical"]:
+                logger.warning(f"[Heartbeat] Detectados {len(issues['critical'])} problemas criticos.")
+            else:
+                logger.info("[Heartbeat] Estado del sistema: OK.")
+
+        async def _morning_summary():
+            """Job: Resumen matutino diario a las 8am — ARIA envia proactivamente."""
+            try:
+                summary_prompt = (
+                    "SISTEMA: Es la verificacion matutina autonoma. "
+                    "Resume brevemente el estado de la memoria reciente y "
+                    "menciona si hay algo pendiente o importante del dia de hoy."
+                )
+                reply = await assistant.process(summary_prompt)
+                if reply:
+                    from telegram import Bot
+                    tg = Bot(token=bot_token)
+                    await tg.send_message(chat_id=paired_user_id, text=f"☀️ Buenos dias:\n\n{reply}")
+                    logger.info("[Scheduler] Resumen matutino enviado a Telegram.")
+            except Exception as e:
+                logger.error(f"[Scheduler] Error en resumen matutino: {e}")
+
+        # Registrar jobs
+        scheduler.register_interval(_heartbeat_check, id="heartbeat", hours=1)
+        scheduler.register_cron(_morning_summary, id="morning_summary", hour=8, minute=0)
+
+    scheduler.start()
+
+    # -- Paso 6.6: Registro Multi-Usuario --
+    from core.user_registry import UserRegistry
+    user_registry = UserRegistry(vault_path)
+
+    # Migrar usuario emparejado legacy (si existe) como admin
+    if bot.allowed_user_id:
+        migrated = user_registry.migrate_from_pairing(
+            bot.allowed_user_id, username="admin"
+        )
+        if migrated:
+            logger.info(f"[UserRegistry] Usuario legacy {bot.allowed_user_id} migrado como admin.")
+
+    # -- Paso 6.7: Dashboard de Monitoreo (localhost:8765) --
+    from communication.dashboard import Dashboard
+    from core.healthcheck import run_healthcheck
+
+    dashboard = Dashboard(
+        lane_queue=bot._lane_queue,
+        scheduler=scheduler,
+        user_registry=user_registry,
+        health_fn=lambda: run_healthcheck(config),
+        waq_dir=vault_path / "waq",
+    )
+    dashboard_port = config.get("dashboard", {}).get("port", 8765)
+    dashboard.start(port=dashboard_port)
+
+    # -- Paso 6.7b: Inyectar scheduler en el plugin de recordatorios --
+    try:
+        from plugins.reminder_plugin import set_scheduler as _set_reminder_scheduler
+
+        def _send_reminder(msg: str):
+            """Envia un recordatorio al usuario via Telegram."""
+            import asyncio as _aio
+            user_ids = [u["user_id"] for u in user_registry.list_users() if u.get("role") == "admin"]
+            for uid in user_ids:
+                _aio.create_task(bot._app.bot.send_message(chat_id=uid, text=msg, parse_mode="Markdown"))
+
+        _set_reminder_scheduler(scheduler, send_fn=_send_reminder)
+        logger.info("[ReminderPlugin] Scheduler inyectado — recordatorios activos.")
+    except Exception as _e:
+        logger.warning(f"[ReminderPlugin] No se pudo inyectar scheduler: {_e}")
+
+
+    # -- Paso 6.8: Memoria Vectorial (ChromaDB) --
+    from core.vector_memory import VectorMemory
+    vector_memory = VectorMemory(vault_path)
+    if vector_memory.available:
+        logger.info(f"[VectorMemory] Activa. {vector_memory.count()} notas indexadas.")
+    else:
+        logger.warning("[VectorMemory] Inactiva (instala chromadb + sentence-transformers).")
+
+    # -- Paso 6.9: Canal Discord (opcional) --
+    import asyncio as _asyncio
+    discord_task = None
+    discord_token = os.environ.get("DISCORD_BOT_TOKEN", "")
+    if discord_token:
+        from communication.discord_bot import DiscordInterface
+        discord_iface = DiscordInterface(
+            token=discord_token,
+            assistant=assistant,
+            lane_queue=bot._lane_queue,
+            user_registry=user_registry,
+            allowed_guild_id=int(os.environ.get("DISCORD_ALLOWED_GUILD_ID", 0)) or None,
+        )
+        logger.info("[Discord] Canal Discord configurado.")
+    else:
+        discord_iface = None
+        logger.info("[Discord] DISCORD_BOT_TOKEN no configurado. Canal Discord inactivo.")
+
     logger.info("=" * 50)
     logger.info(f"{assistant_config.get('name', 'ARIA')} -- OPERACIONAL")
     logger.info("=" * 50)
 
-    # -- Paso 7: Arranque del bot --
+    # -- Paso 7: Arranque del bot (con Discord si esta configurado) --
+    import asyncio as _aio
+
+    async def _run_all():
+        tasks = [_aio.create_task(bot.run_async())]
+        if discord_iface and discord_iface._bot:
+            tasks.append(_aio.create_task(discord_iface.start()))
+        try:
+            await _aio.gather(*tasks)
+        except Exception as e:
+            logger.error(f"Error en el loop principal: {e}")
+
     try:
-        bot.run()
+        # Intentar arranque dual Telegram + Discord si esta disponible
+        # Si run_async no existe, caemos al run() clasico sincronico
+        if hasattr(bot, "run_async") and discord_iface and discord_iface._bot:
+            _aio.run(_run_all())
+        else:
+            bot.run()
     except KeyboardInterrupt:
         logger.info("Apagando asistente...")
+        scheduler.shutdown()
+        dashboard.shutdown()
         assistant.shutdown()
         logger.info("Asistente apagado correctamente.")
 

@@ -1645,30 +1645,138 @@ def register_all_tools(mcp, vault_path: Path, security_config: dict = None, llm_
         return tts_execute(action=accion, text=texto, voice=voz, language=idioma)
 
     # ------------------------------------------------------------------
-    # 29. SISTEMA DE PLUGINS EXTERNOS
+    # 29. SISTEMA DE PLUGINS EXTERNOS (via PluginManager)
     # ------------------------------------------------------------------
+
+    def _get_plugin_manager(sm):
+        """Retorna la instancia de PluginManager del SkillManager."""
+        pm = getattr(sm, "plugin_manager", None)
+        if pm is None:
+            # Compatibilidad: instanciar PluginManager directamente
+            from core.plugin_manager import PluginManager
+            pm = PluginManager(Path("plugins"), mcp_router=mcp)
+        return pm
 
     @mcp.register(
         name="listar_plugins",
-        description="Lista los plugins externos cargados actualmente en el sistema.",
-        parameters={},
+        description=(
+            "Lista los plugins externos instalados con sus metadatos completos: "
+            "nombre, version, descripcion, acciones disponibles y estado."
+        ),
+        parameters={"type": "object", "properties": {}, "required": []},
     )
-    def listar_plugins():
-        """Lista los plugins externos disponibles."""
+    def listar_plugins() -> str:
+        """Lista plugins externos con manifiestos completos."""
         from skills.skill_manager import SkillManager
-        from pathlib import Path
-        sm = SkillManager(Path("skills"))
-        plugins_dir = Path("plugins")
-        
-        plugins = []
-        if plugins_dir.exists():
-            for f in plugins_dir.glob("*.py"):
-                if not f.name.startswith("_"):
-                    plugins.append(f.stem)
-                    
+        sm = SkillManager(Path("skills"), mcp_router=mcp)
+        plugins = _get_plugin_manager(sm).list_plugins()
         if not plugins:
-            return "No hay plugins externos cargados en el directorio plugins/."
-        return f"Plugins externos cargados: {', '.join(plugins)}"
+            return "No hay plugins externos instalados en plugins/."
+        lines = [f"🔌 **Plugins instalados** ({len(plugins)})\n"]
+        for p in plugins:
+            status = p.get("status", "")
+            lines.append(
+                f"  **{p['name']}** v{p['version']} {status}\n"
+                f"    {p.get('description', '')}  \n"
+                f"    Acciones: {', '.join(p.get('actions', [])) or 'ver documentacion'}\n"
+                f"    Autor: {p.get('author', 'local')}"
+            )
+        return "\n".join(lines)
+
+    @mcp.register(
+        name="ejecutar_plugin",
+        description=(
+            "Ejecuta una accion de un plugin externo instalado. "
+            "Usa listar_plugins primero para ver nombres y acciones disponibles."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "plugin_name": {
+                    "type": "string",
+                    "description": "Nombre del plugin (ej: 'weather', 'notes', 'example_plugin')",
+                },
+                "accion": {
+                    "type": "string",
+                    "description": "Accion a ejecutar (ej: 'current', 'list', 'search')",
+                },
+                "datos": {
+                    "type": "string",
+                    "description": "Parametros adicionales en JSON (ej: '{\"city\":\"Madrid\"}') — opcional",
+                },
+            },
+            "required": ["plugin_name", "accion"],
+        },
+    )
+    def ejecutar_plugin(plugin_name: str, accion: str, datos: str = "") -> str:
+        """Ejecuta un plugin externo via PluginManager (con timeout y sandboxing)."""
+        from skills.skill_manager import SkillManager
+        import json as _json
+        sm = SkillManager(Path("skills"), mcp_router=mcp)
+        pm = _get_plugin_manager(sm)
+        kwargs = {"action": accion}
+        if datos:
+            try:
+                kwargs.update(_json.loads(datos))
+            except Exception:
+                return "Error: 'datos' debe ser un JSON valido. Ej: '{\"city\": \"Madrid\"}'."
+        logger.info(f"[MCP] ejecutar_plugin: {plugin_name}.{accion} kwargs={list(kwargs.keys())}")
+        return pm.run(plugin_name, **kwargs)
+
+    @mcp.register(
+        name="instalar_plugin",
+        description=(
+            "Descarga e instala un plugin desde una URL de GitHub. "
+            "El archivo .py debe seguir la interfaz de plugin (SKILL_NAME + execute()). "
+            "Acepta URLs de tipo blob o raw de GitHub."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL del archivo .py en GitHub (blob o raw)",
+                },
+            },
+            "required": ["url"],
+        },
+    )
+    def instalar_plugin(url: str) -> str:
+        """Instala un plugin desde una URL de GitHub sin reiniciar el sistema."""
+        from skills.skill_manager import SkillManager
+        sm = SkillManager(Path("skills"), mcp_router=mcp)
+        pm = _get_plugin_manager(sm)
+        logger.info(f"[MCP] instalar_plugin: {url}")
+        return pm.install_from_github(url)
+
+    @mcp.register(
+        name="recargar_plugin",
+        description=(
+            "Recarga un plugin en tiempo de ejecucion sin reiniciar el asistente. "
+            "Util cuando editas el archivo del plugin manualmente. "
+            "Usa 'todos' como nombre para recargar todos los plugins."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "nombre": {
+                    "type": "string",
+                    "description": "Nombre del plugin a recargar, o 'todos' para recargar todos.",
+                },
+            },
+            "required": ["nombre"],
+        },
+    )
+    def recargar_plugin(nombre: str) -> str:
+        """Recarga un plugin en hot sin reiniciar el proceso."""
+        from skills.skill_manager import SkillManager
+        sm = SkillManager(Path("skills"), mcp_router=mcp)
+        pm = _get_plugin_manager(sm)
+        if nombre.lower() in ("todos", "all", "*"):
+            return pm.reload_all()
+        return pm.reload(nombre)
+
+
 
     # ------------------------------------------------------------------
     # 30. NAVEGACIÓN Y SCRAPING (FIRECRAWL)
@@ -1828,7 +1936,165 @@ Devuelve la salida en terminal, y si usas '-o ruta', leelo despues.""",
         return gcal_execute(action="create", summary=titulo, start_time=inicio, end_time=fin, description=descripcion)
 
     # ------------------------------------------------------------------
+    # MULTI-AGENT: delegar_tarea
+    # ------------------------------------------------------------------
+
+    # Spawner global (lazy-init para no crear circulares en el arranque)
+    _spawner_ref = {"instance": None}
+
+    def _get_spawner():
+        if _spawner_ref["instance"] is None:
+            _llm = _get_llm_ref()
+            if _llm is None:
+                return None
+            from core.agent_spawner import AgentSpawner
+            _spawner_ref["instance"] = AgentSpawner(_llm, mcp)
+        return _spawner_ref["instance"]
+
+    @mcp.register(
+        name="delegar_tarea",
+        description=(
+            "Delega una tarea a un sub-agente especializado. "
+            "Usa este tool cuando la tarea requiera habilidades especificas como "
+            "investigacion web, programacion, control del hogar o analisis de datos. "
+            "Roles disponibles: investigador, programador, hogar, analista."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "rol": {
+                    "type": "string",
+                    "description": (
+                        "Rol del sub-agente especializado: "
+                        "'investigador' (busqueda web/scraping), "
+                        "'programador' (codigo/scripts/bash), "
+                        "'hogar' (Home Assistant/IoT), "
+                        "'analista' (datos/textos/resumenes), "
+                        "'escritor' (redaccion y edicion de textos), "
+                        "'creativo' (ideas, nombres, conceptos originales), "
+                        "'matematico' (calculo, algebra, estadistica), "
+                        "'quimico' (quimica, formulas, reacciones), "
+                        "'astronomo' (cosmos, astrofisica, planetas), "
+                        "'medico' (informacion medica de referencia, NO diagnostica), "
+                        "'filosofo' (etica, logica, historia de la filosofia), "
+                        "'juridico' (informacion legal de referencia, NO asesoria)."
+                    ),
+                    "enum": [
+                        "investigador", "programador", "hogar", "analista",
+                        "escritor", "creativo", "matematico", "quimico",
+                        "astronomo", "medico", "filosofo", "juridico"
+                    ],
+                },
+                "mision": {
+                    "type": "string",
+                    "description": (
+                        "Descripcion completa y detallada de la tarea que debe realizar "
+                        "el sub-agente. Se mas especifico posible para mejores resultados."
+                    ),
+                },
+            },
+            "required": ["rol", "mision"],
+        },
+    )
+    def delegar_tarea(rol: str, mision: str) -> str:
+        """Lanza un sub-agente especializado para ejecutar la mision dada."""
+        spawner = _get_spawner()
+        if spawner is None:
+            return "Error: AgentSpawner no disponible (LLM Engine no inicializado aun)."
+
+        import asyncio
+
+        # Extraer fragmento del historial reciente del asistente principal
+        # para dar contexto al sub-agente (ultimos 4 mensajes usuario/asistente)
+        context = ""
+        llm = _get_llm_ref()
+        if llm and hasattr(llm, "_conversation_history"):
+            recent = [
+                m for m in llm._conversation_history[-8:]
+                if m.get("role") in ("user", "assistant") and m.get("content")
+            ][-4:]
+            if recent:
+                context = "\n".join(
+                    f"{m['role'].upper()}: {str(m['content'])[:300]}"
+                    for m in recent
+                )
+
+        logger.info(f"[delegar_tarea] Delegando al rol '{rol}': {mision[:80]}...")
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                future = asyncio.run_coroutine_threadsafe(
+                    spawner.spawn(rol, mision, context=context), loop
+                )
+                resultado = future.result(timeout=120)
+            else:
+                resultado = loop.run_until_complete(
+                    spawner.spawn(rol, mision, context=context)
+                )
+        except Exception as e:
+            logger.error(f"[delegar_tarea] Error ejecutando sub-agente '{rol}': {e}")
+            resultado = f"Error al ejecutar el sub-agente '{rol}': {str(e)}"
+
+        return resultado
+
+    # ------------------------------------------------------------------
+    # Busqueda semantica (ChromaDB) — Feature 8
+    # ------------------------------------------------------------------
+
+    # Referencia al VectorMemory — se inyecta desde main.py via
+    # tools._vector_memory_ref directamente en el modulo.
+
+    @mcp.register(
+        name="buscar_semantico",
+        description=(
+            "Busqueda semantica sobre las notas del vault. "
+            "Retorna las notas mas relevantes semanticamente, aunque no contengan "
+            "las palabras exactas de la consulta. Ideal para preguntas del tipo "
+            "'¿que sabes sobre X?' o 'encuentra algo relacionado con Y'."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "consulta": {
+                    "type": "string",
+                    "description": "Pregunta o tema a buscar semanticamente.",
+                },
+                "n_resultados": {
+                    "type": "integer",
+                    "description": "Numero de resultados a retornar (1-10). Default: 5.",
+                },
+            },
+            "required": ["consulta"],
+        },
+    )
+    def buscar_semantico(consulta: str, n_resultados: int = 5) -> str:
+        """
+        Busqueda semantica en las notas del vault usando embeddings (ChromaDB).
+        Retorna las N notas mas similares semanticamente a la consulta.
+        """
+        from mcp import tools as _tools_mod
+        vm = getattr(_tools_mod, "_vector_memory_ref", None)
+        if vm is None or not vm.available:
+            return (
+                "Busqueda semantica no disponible. "
+                "Instala: pip install 'chromadb>=0.5' 'sentence-transformers>=3.0'"
+            )
+        results = vm.search(consulta, n_results=n_resultados)
+        if not results:
+            return "No se encontraron notas relacionadas con esa consulta."
+        lines = []
+        for i, r in enumerate(results, 1):
+            score_pct = int(r["score"] * 100)
+            lines.append(f"**[{i}] Similitud: {score_pct}%**\n{r['text'][:400]}")
+        return "\n\n---\n".join(lines)
+
+    # ------------------------------------------------------------------
     # Resumen de registro
     # ------------------------------------------------------------------
     tool_names = mcp.get_tool_names()
     logger.info(f"[MCP] {len(tool_names)} herramientas registradas: {', '.join(tool_names)}")
+
+
+# Referencia al modulo-nivel para inyeccion de VectorMemory desde main.py
+_vector_memory_ref = None

@@ -8,27 +8,28 @@ Disenado para hardware con recursos limitados (ej. Orange Pi Zero 2W, 4GB RAM) y
 
 El sistema esta dividido en capas modulares que separan la identidad de la memoria, las herramientas de ejecucion y los canales de comunicacion:
 
-1. **Capa de Inferencia (LLM Engine):** Abstraccion multi-modelo compatible con Groq, OpenAI, Anthropic, Ollama local, entre otros, manejando la logica y el razonamiento.
-2. **Capa de Seguridad:** Aislamiento estricto de red, proteccion de archivos sensibles, autenticacion mediante bcrypt y prevencion de inyecciones de comandos.
-3. **Capa de Persistencia (Memoria y Soul):** Directorio seguro que almacena la identidad del asistente (`soul_state.md`), perfil de usuario, memoria a largo plazo consolidada, y registros de chat. En produccion, se monta sobre LUKS2 o usa encriptacion nivel aplicacion.
-4. **Capa de Orquestacion:** Bucle central que recibe el contexto de identidad, la memoria reciente y enruta las interacciones hacia el modulo Model Context Protocol (MCP) o los Skills.
-5. **Capa de Módulos (MCP y Skills):** Proveen capacidades tangibles al agente:
-   - **MCP:** Ejecucion segura de operaciones directas (lectura de archivos, consultas web crudas, APIs).
-   - **Skills:** Integraciones complejas (Home Assistant, Web Scraping avanzado mediante Playwright/Firecrawl, control local y desktop).
-6. **Capa de Presentacion:** Interfaz principal de entrada salida, actualmente operando a traves de Telegram Bot con emparejamiento seguro y autenticacion.
+1. **Capa de Inferencia (LLM Engine):** Abstraccion multi-modelo: Groq, OpenAI, Anthropic, Ollama local, DeepSeek, Gemini, entre otros.
+2. **Capa de Seguridad:** Aislamiento estricto de red, bcrypt, prevencion de inyecciones y path traversal.
+3. **Capa de Persistencia:** Vault con `soul_state.md`, perfil de usuario, memoria a largo plazo. Soporta LUKS2 y cifrado nivel aplicacion.
+4. **Capa de Orquestacion:** Bucle central con **Lane Queue** FIFO por usuario (OpenClaw) que previene race conditions. Integra Scheduler de invocacion autonoma.
+5. **Capa de Modulos:**
+   - **MCP (63+ tools):** Operaciones directas: archivos, web, APIs, email, calendario, domotica.
+   - **Skills (19+):** Home Assistant, Firecrawl, voz, TTS, Media, PDF, Desktop.
+   - **Sub-Agentes (12 roles):** Sistema Multi-Agente donde ARIA delega tareas a especialistas efimeros via `delegar_tarea`.
+6. **Capa de Presentacion:** Telegram Bot con pairing seguro y autenticacion bcrypt.
+7. **Invocacion Autonoma:** APScheduler con cron/interval/one-shot. ARIA actua proactivamente sin intervencion del usuario.
 
 ## Estado de Desarrollo
 
 El proyecto se encuentra funcional con gran cantidad de herramientas integradas, estructurado en fases de desarrollo progresivo. Funciones destacadas desarrolladas:
 
-- **Motor Central:** Integracion fluida de multiples LLMs, orquestacion de herramientas con parseo defensivo contra alucinaciones del modelo (errores `tool_use_failed` mitigados).
-- **Herramientas (62 MCPs Activos):** Capacidad de leer y escribir archivos, gestionar tareas de sistema operativo, consultas a bases de datos SQLite integradas, traducciones, consultas de fechas/climas, extraccion de texto de PDFs y gestion de calendarios.
-- **Habilidades Complejas (19 Skills Activas):**
-  - Manejo de portapapeles y ventanas graficas (Desktop Manager via xdotool).
-  - Web scraping interactivo (Skill original via Playwright y reciente integracion con CLI de Firecrawl para webs complejas protegiendo la API Key).
-  - Reconocimiento de voz local y por transcribcion cloud (Whisper).
-  - Motores de Text-to-Speech multi-tecnologia integrados.
-  - Interaccion bidireccional con nodos de domotica Home Assistant.
+- **Motor Central:** Integracion fluida de multiples LLMs, orquestacion con parseo defensivo contra alucinaciones.
+- **Lane Queue (OpenClaw):** Cola asyncio serial FIFO por usuario en `core/lane_queue.py`.
+- **Autonomous Invocation (OpenClaw):** APScheduler en `core/scheduler.py`. Jobs demo: healthbeat horario y resumen matutino a las 8am.
+- **Multi-Agent Execution (OpenClaw):** Sistema de 12 sub-agentes especializados en `core/agent_spawner.py`. ARIA los convoca via MCP `delegar_tarea`.
+- **Herramientas (63+ MCPs Activos):** Archivos, OS, SQLite, email, PDFs, Home Assistant, Google Calendar.
+- **Habilidades Complejas (19 Skills Activas):** Scraping, voz, TTS, media, IoT, plugins externos.
+- **Setup Wizard (`wizard.py`):** TUI interactivo con rich: auto-venv, pip install, configuracion completa de API keys.
 
 ## 🔒 Auditorías de Seguridad Centralizadas
 
@@ -111,13 +112,16 @@ Se realizó una auditoría completa del código fuente, configuraciones, scripts
 ```
 Py-Assistant/
 ├── main.py
+├── wizard.py                    # Setup Wizard TUI (rich)
 ├── requirements.txt
 ├── .env
 ├── README.md
-├── wizard.py
 │
 ├── core/
-│   ├── assistant.py
+│   ├── assistant.py             # Orquestador principal
+│   ├── agent_spawner.py         # Multi-Agent (12 especialistas)
+│   ├── lane_queue.py            # Cola asyncio serial por usuario
+│   ├── scheduler.py             # Invocacion Autonoma (APScheduler)
 │   ├── auth.py
 │   ├── healthcheck.py
 │   ├── llm_engine.py
@@ -299,17 +303,49 @@ Si desea iniciar la instancia local en ambiente de desarrollo:
 
 ---
 
-### �🔲 Fase 3 — Pendiente (Avanzado)
+### Fase 3 — En Progreso / Avanzado
 
-- [ ] Motor LLM local con Ollama (requiere hardware)
-- [ ] Despliegue en Orange Pi Zero 2W
-- [x] MCP: Integración con Google Calendar (requiere API key)
-- [ ] Interfaz web administrativa
-- [x] Sistema de plugins para skills de terceros
-- [x] Voice-to-text (Whisper API + speech_recognition)
-- [x] Text-to-voice (TTS)
-- [ ] Multi-usuario con roles
-- [ ] Dashboard de monitoreo
-- [ ] Configurar API keys: `GOOGLE_MAPS_KEY`, `OPENWEATHER_KEY`, `NEWS_API_KEY`
+- [x] Motor LLM local con Ollama (tool-calling implementado)
+- [x] `wizard.py` — Setup Wizard TUI con auto-venv y recoleccion de API keys
+- [x] `core/lane_queue.py` — Procesamiento serial FIFO por usuario (OpenClaw)
+- [x] `core/scheduler.py` — Invocacion Autonoma APScheduler (OpenClaw)
+- [x] `core/agent_spawner.py` — Multi-Agent: 12 especialistas con whitelist de tools
+- [x] MCP `delegar_tarea` — ARIA convoca sub-agentes autonomamente
+- [x] Soporte multi-proveedor: Groq, OpenAI, Anthropic, Gemini, DeepSeek, Ollama
 
 ---
+
+## Pendiente Priorizado
+
+### Alta Prioridad
+
+| # | Tarea |
+|---|---|
+| 1 | Despliegue en Orange Pi Zero 2W (objetivo hardware principal) |
+| 2 | Interfaz web administrativa (logs, memoria, scheduler, sub-agentes) |
+| 3 | Configurar API keys opcionales: `GOOGLE_MAPS_KEY`, `OPENWEATHER_KEY`, `NEWS_API_KEY`, `HASS_TOKEN` |
+| 4 | Tests de integracion Multi-Agente (end-to-end con los 12 roles) |
+
+### Media Prioridad
+
+| # | Tarea |
+|---|---|
+| 5 | Multi-usuario con roles (mas de un usuario Telegram con permisos diferenciados) |
+| 6 | Dashboard de monitoreo (jobs activos, lanes, health del sistema) |
+| 7 | Write-ahead Queue para crash recovery (OpenClaw-inspired) |
+| 8 | Memoria vectorial (ChromaDB/FAISS) para busqueda semantica |
+| 9 | Pasar contexto de conversacion relevante a los sub-agentes |
+| 10 | Canal secundario: Discord o WhatsApp |
+
+### Ideas / Futuro
+
+| # | Idea |
+|---|---|
+| 11 | Sub-agente `financiero` (portafolios, cripto, alertas de precios) |
+| 12 | Sub-agente `coordinador` (orquestar multiples sub-agentes en paralelo) |
+| 13 | Plugin marketplace (instalar skills desde GitHub) |
+| 14 | Voz bidireccional via Telegram voice messages |
+| 15 | OpenAPI spec de los MCPs para integraciones externas |
+
+---
+Desarrollado con ❤️ por Ale

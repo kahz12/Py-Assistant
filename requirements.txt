@@ -6,6 +6,7 @@ pyyaml==6.0.1
 python-dotenv==1.0.1
 loguru==0.7.2
 rich>=13.0.0
+APScheduler>=3.10.4
 
 # Seguridad
 cryptography==42.0.8
@@ -16,6 +17,13 @@ bcrypt>=4.0.0
 
 # Opcional: Motor local
 ollama>=0.3.0
+
+# Opcional: Memoria vectorial semantica (Feature 8)
+# chromadb>=0.5.0
+# sentence-transformers>=3.0.0
+
+# Opcional: Canal Discord (Feature 10)
+# discord.py>=2.3.0
 
 # Testing
 pytest>=8.3.0

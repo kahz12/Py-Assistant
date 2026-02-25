@@ -224,7 +224,9 @@ def setup_environment(api_key_var: str):
         ("GOOGLE_MAPS_KEY", "Habilita geocoding y estimaciones de ruta"),
         ("HASS_TOKEN", "Long-Lived Access Token de Home Assistant"),
         ("HASS_URL", "URL Base de Home Assistant (ej. http://192.168.1.100:8123)"),
-        ("OPENAI_API_KEY", "Usada para OCR/Vision/Transcribcion si tu LLM principal es otro")
+        ("DISCORD_BOT_TOKEN", "Token del Bot de Discord (opcional, canal secundario)"),
+        ("DISCORD_ALLOWED_GUILD_ID", "ID del servidor Discord permitido (deja vacio = todos)"),
+        ("OPENAI_API_KEY", "Usada para OCR/Vision/Transcribcion si tu LLM principal es otro"),
     ]
     
     for key_name, desc in opt_keys:
@@ -270,6 +272,41 @@ def setup_vault():
         console.print(f"[red]Error al inicializar la protección Bcrypt: {e}[/]\n")
 
 
+def setup_optional_deps():
+    """Paso 5: Informa al usuario sobre las dependencias opcionales y ofrece instalarlas."""
+    console.print("[bold yellow]5. Dependencias Opcionales[/]")
+    console.print("Las siguientes caracteristicas requieren paquetes adicionales.\n")
+
+    deps_map = {
+        "Memoria Vectorial Semantica (buscar_semantico)": [
+            "chromadb>=0.5.0",
+            "sentence-transformers>=3.0.0",
+        ],
+        "Canal Discord (bot secundario)": [
+            "discord.py>=2.3.0",
+        ],
+    }
+
+    to_install = []
+    for feature_name, packages in deps_map.items():
+        pkgs_str = ", ".join(packages)
+        if Confirm.ask(
+            f"  ¿Instalar [bold cyan]{feature_name}[/]? ([dim]{pkgs_str}[/])",
+            default=False,
+        ):
+            to_install.extend(packages)
+
+    if to_install:
+        console.print(f"\nInstalando {len(to_install)} paquete(s)...")
+        try:
+            subprocess.check_call([str(PIP_BIN), "install"] + to_install)
+            console.print("[green]✔ Dependencias opcionales instaladas.[/]\n")
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]Error al instalar dependencias: {e}[/]\n")
+    else:
+        console.print("[dim]Ningun paquete opcional instalado.[/]\n")
+
+
 def finish_wizard():
     console.print("[bold green]=============================================[/]")
     console.print("[bold green]  🎉 CONFIGURACION COMPLETADA EXITOSAMENTE  🎉[/]")
@@ -290,6 +327,7 @@ if __name__ == "__main__":
         api_key_env = setup_llm_engine()
         setup_environment(api_key_env)
         setup_vault()
+        setup_optional_deps()
         finish_wizard()
     except KeyboardInterrupt:
         console.print("\n[bold red]Wizard cancelado por el usuario.[/]")
